@@ -1,0 +1,195 @@
+name: Build and Publish Docker Images
+
+on:
+  # 1. 定时触发：每天 UTC 02:00 (北京时间 10:00) 自动检查上游最新 Tag 并打包
+  schedule:
+    - cron: '0 2 * * *'
+
+  # 2. 手动触发：可在 GitHub Actions 界面一键点击，默认自动拉取上游最新 Tag
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: '构建的 micam Tag (默认 "latest" 自动获取上游最新 Tag，也可指定如 "v0.41.40")'
+        required: false
+        type: string
+        default: 'latest'
+      force:
+        description: '强制重新构建 (若该 Tag 已经构建过仍强制重新构建)'
+        required: false
+        type: boolean
+        default: false
+      with_ai:
+        description: '是否打包本地 ONNX AI 推理依赖 (numpy, opencv, onnxruntime)'
+        required: false
+        type: boolean
+        default: false
+      push_dockerhub:
+        description: '是否推送到 Docker Hub (需在 Secrets 配置 DOCKERHUB_USERNAME 和 DOCKERHUB_TOKEN)'
+        required: false
+        type: boolean
+        default: true
+
+  # 3. 仓库代码更新时触发
+  push:
+    branches:
+      - main
+      - master
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # 自动获取 micam 最新 Tag
+      - name: Determine Target Tag
+        id: target
+        run: |
+          INPUT_TAG="${{ github.event.inputs.tag }}"
+          UPSTREAM_REPO="https://github.com/AmigaMeow/micam.git"
+
+          if [ -z "$INPUT_TAG" ] || [ "$INPUT_TAG" = "latest" ]; then
+            echo "--> 正在从上游 $UPSTREAM_REPO 自动检索最新 Tag..."
+            LATEST_TAG=$(git ls-remote --tags --refs "$UPSTREAM_REPO" | awk -F'/' '{print $3}' | sort -V | tail -n 1)
+            if [ -z "$LATEST_TAG" ]; then
+              echo "::warning::未能检索到上游 Tag，退回 master 分支"
+              TARGET_TAG="master"
+            else
+              TARGET_TAG="$LATEST_TAG"
+            fi
+            echo "--> 上游最新 Tag 识别为: $TARGET_TAG"
+          else
+            TARGET_TAG="$INPUT_TAG"
+            echo "--> 使用用户指定的 Tag: $TARGET_TAG"
+          fi
+
+          # 去除可能包含的 'v' 前缀作为纯数字版本号 (如 v0.41.40 -> 0.41.40)
+          CLEAN_VER="${TARGET_TAG#v}"
+
+          echo "tag=$TARGET_TAG" >> $GITHUB_OUTPUT
+          echo "version=$CLEAN_VER" >> $GITHUB_OUTPUT
+
+          # 若是定时触发 (schedule)，检查本仓库是否已经发布过此 Tag
+          if [ "${{ github.event_name }}" = "schedule" ] && [ "${{ github.event.inputs.force }}" != "true" ]; then
+            git fetch --tags origin || true
+            if git rev-parse -q --verify "refs/tags/$TARGET_TAG" >/dev/null; then
+              echo "--> 上游最新 Tag ($TARGET_TAG) 已经构建过，跳过本次定时构建。"
+              echo "skip=true" >> $GITHUB_OUTPUT
+            else
+              echo "--> 发现上游新 Tag ($TARGET_TAG)，开始自动构建发布！"
+              echo "skip=false" >> $GITHUB_OUTPUT
+            fi
+          else
+            echo "skip=false" >> $GITHUB_OUTPUT
+          fi
+
+      # 检出对应 Tag 的 micam 源码
+      - name: Checkout MiCam Source
+        if: steps.target.outputs.skip != 'true'
+        run: |
+          TARGET_TAG="${{ steps.target.outputs.tag }}"
+          echo "正在克隆 micam 源码 (Tag: $TARGET_TAG)..."
+          rm -rf micam
+          if [ "$TARGET_TAG" = "master" ] || [ "$TARGET_TAG" = "main" ]; then
+            git clone --depth=1 https://github.com/AmigaMeow/micam.git micam
+          else
+            git clone --depth=1 --branch "$TARGET_TAG" https://github.com/AmigaMeow/micam.git micam
+          fi
+          echo "micam 源码就绪。"
+
+      # 检查 Docker Hub 凭证配置
+      - name: Check Docker Hub Credentials
+        if: steps.target.outputs.skip != 'true'
+        id: check-dockerhub
+        run: |
+          if [ "${{ github.event.inputs.push_dockerhub }}" != "false" ] && \
+             [ -n "${{ secrets.DOCKERHUB_USERNAME }}" ] && \
+             [ -n "${{ secrets.DOCKERHUB_TOKEN }}" ]; then
+            echo "enabled=true" >> $GITHUB_OUTPUT
+            echo "Docker Hub 凭证已就绪，将同时发布至 Docker Hub"
+          else
+            echo "enabled=false" >> $GITHUB_OUTPUT
+            echo "Docker Hub 凭证未配置或跳过，仅发布至 GHCR"
+          fi
+
+      - name: Set up QEMU (Multi-platform emulation)
+        if: steps.target.outputs.skip != 'true'
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: linux/amd64,linux/arm64
+
+      - name: Set up Docker Buildx
+        if: steps.target.outputs.skip != 'true'
+        uses: docker/setup-buildx-action@v3
+
+      # 登录到 GitHub Container Registry (GHCR)
+      - name: Login to GHCR
+        if: steps.target.outputs.skip != 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # 登录到 Docker Hub
+      - name: Login to Docker Hub
+        if: steps.target.outputs.skip != 'true' && steps.check-dockerhub.outputs.enabled == 'true'
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      # 生成镜像 Tag 列表
+      - name: Extract Docker Metadata
+        if: steps.target.outputs.skip != 'true'
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: |
+            ghcr.io/${{ github.repository }}
+            ${{ steps.check-dockerhub.outputs.enabled == 'true' && format('{0}/micam', secrets.DOCKERHUB_USERNAME) || '' }}
+          tags: |
+            type=raw,value=latest
+            type=raw,value=${{ steps.target.outputs.tag }}
+            type=raw,value=${{ steps.target.outputs.version }}
+
+      # 构建并推送到目标镜像库 (支持 amd64 + arm64 双架构)
+      - name: Build and Push Multi-arch Docker Image
+        if: steps.target.outputs.skip != 'true'
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            APP_VERSION=${{ steps.target.outputs.version }}
+            WITH_AI=${{ github.event.inputs.with_ai || 'false' }}
+            PREFETCH_LIB=false
+            PIP_INDEX_URL=https://pypi.org/simple
+            GOPROXY=https://proxy.golang.org,direct
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # 在本仓库打上对应的 Git Tag 记录构建历史
+      - name: Tag Current Repository
+        if: steps.target.outputs.skip != 'true' && steps.target.outputs.tag != 'master' && steps.target.outputs.tag != 'main'
+        run: |
+          TAG="${{ steps.target.outputs.tag }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git fetch --tags origin || true
+          if ! git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+            echo "为本仓库打上版本 Tag: $TAG 并推送..."
+            git tag -a "$TAG" -m "Automated Docker build for MiCam $TAG"
+            git push origin "$TAG" || true
+          fi

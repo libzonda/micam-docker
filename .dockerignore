@@ -1,0 +1,17 @@
+# Git
+.git
+.gitignore
+.github
+
+# Build artifacts & temp
+dist/
+stage/
+tmp/
+*.log
+*.pid
+*.sock
+*.lock
+
+# Docker local data
+data/
+

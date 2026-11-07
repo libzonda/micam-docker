@@ -1,0 +1,28 @@
+services:
+  micam:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        WITH_AI: "false"        # 若需本地 ONNX AI 推理可设为 "true"
+        PREFETCH_LIB: "false"   # 若需构建时预拉取官方流媒体组件可设为 "true"
+    image: micam:latest
+    container_name: micam
+    restart: unless-stopped
+    
+    # 推荐模式 A: Host 网络（与宿主机共享网络，P2P直连与UDP通信最稳定）
+    network_mode: "host"
+    
+    # 模式 B: Bridge 网络（若使用 Bridge 模式，请注释掉上面的 network_mode 并启用下面的 ports）
+    # ports:
+    #   - "8900:8900"
+    
+    environment:
+      - TZ=Asia/Shanghai
+      - PORT=8900
+      - AUTO_FETCH_MIOT_LIB=true
+    volumes:
+      - ./data:/data
+    # 如需启用 Intel 核显 / VAAPI 硬件转码加速，请取消以下注释:
+    # devices:
+    #   - /dev/dri:/dev/dri

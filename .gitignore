@@ -1,0 +1,13 @@
+# Runtime data & secrets
+data/
+*.log
+*.pid
+*.sock
+*.lock
+
+# Upstream source code (cloned on-demand by build scripts and CI/CD)
+micam/
+
+# OS generated files
+.DS_Store
+Thumbs.db
