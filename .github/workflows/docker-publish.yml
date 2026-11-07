@@ -180,6 +180,17 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      # 同步推送 README 至 Docker Hub 镜像主页 Overview
+      - name: Update Docker Hub Description
+        if: steps.target.outputs.skip != 'true' && steps.check-dockerhub.outputs.enabled == 'true'
+        uses: peter-evans/dockerhub-description@v4
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          repository: ${{ secrets.DOCKERHUB_USERNAME }}/micam
+          readme-filepath: ./README_DOCKERHUB.md
+          short-description: 'MiCam - 小米/米家摄像头监控与私有 NVR 容器化套件'
+
       # 在本仓库打上对应的 Git Tag 记录构建历史
       - name: Tag Current Repository
         if: steps.target.outputs.skip != 'true' && steps.target.outputs.tag != 'master' && steps.target.outputs.tag != 'main'
