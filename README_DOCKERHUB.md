@@ -5,8 +5,11 @@
 
 本镜像是开源项目 **[MiCam (AmigaMeow/micam)](https://github.com/AmigaMeow/micam)** 的 Docker 容器化打包版本。
 
+> **MiCam 是什么？**  
+> **MiCam** 是一款专为小米/米家摄像头打造的私有化监控桥接与本地 NVR 套件，支持局域网 P2P 低延迟直连、24小时本地原画连续录像、双摄分屏、云台控制与边缘 AI 分析。
+
 > **关于 MiCam 的具体功能与特性**：  
-> 本镜像仅作为 MiCam 的容器化部署方案。关于 MiCam 的功能介绍、使用场景、支持的摄像头型号及更新日志，请直接访问原项目主页查阅：  
+> 本镜像仅作为 MiCam 的容器化部署方案。关于 MiCam 的详细功能介绍、使用场景、支持的摄像头型号及更新日志，请直接访问原项目主页查阅：  
 > 👉 **[https://github.com/AmigaMeow/micam](https://github.com/AmigaMeow/micam)**
 
 ---
